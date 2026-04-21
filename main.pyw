@@ -11,14 +11,25 @@ import queue
 
 # --- AYARLAR ---
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_ADI = "gemini-3-flash-preview:latest"  # Ana model (F8)
+MODEL_ADI = "gpt-oss:120b-cloud"  # Radyoloji Rapor Asistanı modeli (F8)
 TEXT_MODEL_CANDIDATES = [
     MODEL_ADI,
-    "gemini-3-flash-preview:cloud",
+    "gpt-oss:120b",
+    "gpt-oss:latest",
 ]
 
-KISAYOL_METIN = keyboard.Key.f8  # Metin secimi icin kisayol
+KISAYOL_METIN = keyboard.Key.f8  # Metin seçimi için kısayol
 
+SISTEM_PROMPT = """Sen deneyimli bir sağlık asistanısın. Kullanıcılar sana MR, BT (Bilgisayarlı Tomografi) veya diğer radyoloji raporlarını gönderiyor. Aşağıdaki kurallara KESINLIKLE uy:
+
+KURALLAR:
+1. Tıbbi terimleri mümkün olduğunca sadeleştir ve gerekiyorsa kısa parantez içi açıklama ekle.
+2. Korkutucu veya kesin tanı koyan ifadeler KULLANMA. "Kesinlikle şu hastalık var" gibi cümleler kurma.
+3. Her yanıtın sonuna şu uyarıyı ekle: "⚠️ Bu bir doktor tanısı değildir. Lütfen uzman hekiminize başvurunuz."
+4. Metinde olmayan bilgileri UYDURMA. Belirsiz bir durum varsa "Bu bilgiye göre kesin bir şey söylenemez" de.
+5. Açıklamalar kısa, net ve günlük dilde olsun.
+6. Acil durumları fark edersen hastayı uyar.
+"""
 
 # Global değişkenler
 root = None
@@ -28,24 +39,46 @@ kisayol_basildi = False
 
 # --- MENÜ SEÇENEKLERİ VE PROMPT'LAR ---
 ISLEMLER = {
-    "📝 Gramer Düzelt": "Bu metni Türkçe yazım ve dil bilgisi kurallarına göre düzelt, resmi ve akıcı olsun. Sadece sonucu ver.",
-    "🇬🇧 İngilizceye Çevir": "Bu metni İngilizceye çevir. Sadece çeviriyi ver.",
-    "🇹🇷 Türkçeye Çevir": "Bu metni Türkçeye çevir. Sadece çeviriyi ver.",
-    "📑 Özetle (Madde Madde)": "Bu metni analiz et ve en önemli noktaları madde madde özetle.",
-    "💼 Daha Resmi Yap": "Bu metni kurumsal bir e-posta diline çevir, çok resmi olsun.",
-    "🐍 Python Koduna Çevir": "Bu metindeki isteği yerine getiren bir Python kodu yaz. Sadece kodu ver.",
-    "📧 Cevap Yaz (Mail)": "Bu gelen bir e-posta, buna kibar ve profesyonel bir cevap metni taslağı yaz.",
-    "🎮 PS5 Oyun Skor + Acımasız Yorum": (
-        "Seçili metni bir PS5 oyunu adı olarak ele al. Aşağıdaki formatta Türkçe cevap ver:\n"
-        "1) Oyun: <ad>\n"
-        "2) Topluluk Beğeni Skorları:\n"
-        "- Metacritic User Score: <değer veya 'bilgi yok'>\n"
-        "- OpenCritic / benzer eleştirmen ortalaması: <değer veya 'bilgi yok'>\n"
-        "- Oyuncu yorumu ortalaması (PS Store vb.): <değer veya 'bilgi yok'>\n"
-        "3) Hüküm: sadece 'IYI' veya 'KOTU'\n"
-        "4) Acımasız Yorum: 2-4 cümle, net ve sert.\n"
-        "Kurallar: Kesin bilmediğin puanı uydurma, onun yerine 'bilgi yok' yaz. "
-        "Yorumu skorlarla tutarlı kur."
+    "📋 Raporun Basit Özeti": (
+        "Aşağıdaki radyoloji raporunu oku ve hastanın anlayabileceği şekilde özetle.\n"
+        "Çıktı formatı:\n"
+        "[Başlık: Raporun Basit Özeti]\n"
+        "- Bu rapora göre ...\n"
+        "- Önemli bulunan durum: ...\n"
+        "(Her madde kısa ve anlaşılır olsun. Tıbbi terimler varsa parantez içinde açıkla.)"
+    ),
+    "❓ Ne Anlama Geliyor?": (
+        "Aşağıdaki radyoloji raporundaki bulguları analiz et ve hastanın anlayabileceği şekilde açıkla.\n"
+        "Çıktı formatı:\n"
+        "[Başlık: Ne Anlama Geliyor?]\n"
+        "- Bu durum genellikle ...\n"
+        "- Ciddi olup olmadığı için doktor değerlendirmesi gerekir\n"
+        "(Kesin tanı koyma, sadece genel bilgi ver.)"
+    ),
+    "💊 Tedavi / Yapılması Gerekenler": (
+        "Aşağıdaki radyoloji raporunu inceleyerek hastaya ne yapması gerektiğini anlat.\n"
+        "Çıktı formatı:\n"
+        "[Başlık: Tedavi / Yapılması Gerekenler]\n"
+        "- Doktora başvurulması önerilir\n"
+        "- Gerekirse ilaç veya fizik tedavi planlanabilir\n"
+        "(Kesin tedavi önerme, sadece genel tavsiye ver.)"
+    ),
+    "🔬 Gerekirse Ek Tetkikler": (
+        "Aşağıdaki radyoloji raporunu inceleyerek hangi ek tetkiklerin gerekebileceğini açıkla.\n"
+        "Çıktı formatı:\n"
+        "[Başlık: Gerekirse Ek Tetkikler]\n"
+        "- Bu bulgular için ek olarak ... istenebilir\n"
+        "- Doktorunuz gerekli görürse ...\n"
+        "(Sadece rapordaki bulgulara dayanarak öner, hayal etme.)"
+    ),
+    "📅 Takip Süreci": (
+        "Aşağıdaki radyoloji raporunu inceleyerek hastanın nasıl bir takip sürecinden geçmesi gerektiğini anlat.\n"
+        "Çıktı formatı:\n"
+        "[Başlık: Takip Süreci]\n"
+        "- Ne zaman kontrol gerekir: ...\n"
+        "- Dikkat edilmesi gereken belirtiler: ...\n"
+        "- Acil başvuruyu gerektiren durumlar: ...\n"
+        "(Kısa ve net ol.)"
     ),
 }
 
@@ -80,21 +113,30 @@ def get_available_text_model():
     return MODEL_ADI
 
 
-def ollama_cevap_al(prompt):
+def ollama_cevap_al(prompt, sistem_prompt=None):
     """Ollama API'den cevap al."""
     try:
         aktif_model = get_available_text_model()
+
+        # Sistem promptunu dahil et
+        full_prompt = ""
+        if sistem_prompt:
+            full_prompt = f"{sistem_prompt}\n\n---\n\n{prompt}"
+        else:
+            full_prompt = prompt
+
         payload = {
             "model": aktif_model,
-            "prompt": prompt,
+            "prompt": full_prompt,
             "stream": False,
             "options": {
-                "temperature": 0.7,
+                "temperature": 0.4,
                 "top_p": 0.9,
+                "num_ctx": 4096,
             },
         }
 
-        response = requests.post(OLLAMA_URL, json=payload, timeout=60)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=120)
 
         if response.status_code == 200:
             result = response.json()
@@ -125,21 +167,8 @@ def ollama_cevap_al(prompt):
         return None
 
 
-def strip_code_fence(text):
-    if not text:
-        return text
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        lines = lines[1:] if lines else []
-        while lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        cleaned = "\n".join(lines).strip()
-    return cleaned
-
-
 def secili_metni_kopyala(max_deneme=4):
-    sentinel = f"__AI_ASISTAN__{time.time_ns()}__"
+    sentinel = f"__SAGLIK_ASISTANI__{time.time_ns()}__"
     try:
         pyperclip.copy(sentinel)
     except Exception:
@@ -154,31 +183,65 @@ def secili_metni_kopyala(max_deneme=4):
     return ""
 
 
-def pencere_modunda_gosterilsin_mi(komut_adi):
-    return "PS5 Oyun Skor" in komut_adi
-
-
 def sonuc_penceresi_goster(baslik, icerik):
+    """Sonuç penceresini göster."""
     pencere = tk.Toplevel(root)
-    pencere.title(baslik)
-    pencere.geometry("780x520")
-    pencere.minsize(520, 320)
+    pencere.title(f"🏥 Radyoloji Rapor Asistanı — {baslik}")
+    pencere.geometry("860x600")
+    pencere.minsize(600, 400)
     pencere.attributes("-topmost", True)
+    pencere.configure(bg="#0d1117")
 
-    frame = tk.Frame(pencere, bg="#1f1f1f")
-    frame.pack(fill="both", expand=True, padx=10, pady=10)
+    # Başlık çubuğu
+    baslik_frame = tk.Frame(pencere, bg="#161b22", pady=12)
+    baslik_frame.pack(fill="x")
+
+    tk.Label(
+        baslik_frame,
+        text="🏥 Radyoloji Rapor Asistanı",
+        font=("Segoe UI", 12, "bold"),
+        bg="#161b22",
+        fg="#58a6ff",
+    ).pack(side="left", padx=16)
+
+    tk.Label(
+        baslik_frame,
+        text=baslik,
+        font=("Segoe UI", 11),
+        bg="#161b22",
+        fg="#8b949e",
+    ).pack(side="left", padx=4)
+
+    # Uyarı bandı
+    uyari_frame = tk.Frame(pencere, bg="#3d1f00", pady=6)
+    uyari_frame.pack(fill="x")
+    tk.Label(
+        uyari_frame,
+        text="⚠️  Bu uygulama bilgilendirme amaçlıdır. Doktor tanısı değildir. Hekiminize başvurunuz.",
+        font=("Segoe UI", 9),
+        bg="#3d1f00",
+        fg="#ffa657",
+    ).pack(padx=14)
+
+    # İçerik alanı
+    frame = tk.Frame(pencere, bg="#0d1117")
+    frame.pack(fill="both", expand=True, padx=14, pady=10)
 
     text_alani = tk.Text(
         frame,
         wrap="word",
-        bg="#2b2b2b",
-        fg="white",
-        insertbackground="white",
+        bg="#161b22",
+        fg="#e6edf3",
+        insertbackground="#e6edf3",
         font=("Segoe UI", 10),
-        padx=10,
-        pady=10,
+        padx=14,
+        pady=14,
+        relief="flat",
+        borderwidth=0,
+        spacing1=2,
+        spacing3=4,
     )
-    kaydirma = tk.Scrollbar(frame, command=text_alani.yview)
+    kaydirma = tk.Scrollbar(frame, command=text_alani.yview, bg="#21262d", troughcolor="#161b22")
     text_alani.configure(yscrollcommand=kaydirma.set)
 
     text_alani.pack(side="left", fill="both", expand=True)
@@ -187,68 +250,134 @@ def sonuc_penceresi_goster(baslik, icerik):
     text_alani.insert("1.0", icerik)
     text_alani.config(state="disabled")
 
-    alt_frame = tk.Frame(pencere, bg="#1f1f1f")
-    alt_frame.pack(fill="x", padx=10, pady=(0, 10))
+    # Alt butonlar
+    alt_frame = tk.Frame(pencere, bg="#161b22", pady=10)
+    alt_frame.pack(fill="x", padx=14)
 
     def panoya_kopyala():
         pyperclip.copy(icerik)
+        btn_kopyala.config(text="✅ Kopyalandı!")
+        pencere.after(1500, lambda: btn_kopyala.config(text="📋 Panoya Kopyala"))
 
-    tk.Button(
+    btn_kopyala = tk.Button(
         alt_frame,
-        text="Panoya Kopyala",
+        text="📋 Panoya Kopyala",
         command=panoya_kopyala,
-        bg="#3d3d3d",
-        fg="white",
-        activebackground="#4d4d4d",
-        activeforeground="white",
+        bg="#21262d",
+        fg="#e6edf3",
+        activebackground="#30363d",
+        activeforeground="#e6edf3",
         relief="flat",
-        padx=12,
-        pady=6,
-    ).pack(side="left")
+        padx=14,
+        pady=7,
+        font=("Segoe UI", 9),
+        cursor="hand2",
+    )
+    btn_kopyala.pack(side="left", padx=(0, 8))
 
     tk.Button(
         alt_frame,
-        text="Kapat",
+        text="❌ Kapat",
         command=pencere.destroy,
-        bg="#3d3d3d",
-        fg="white",
-        activebackground="#4d4d4d",
-        activeforeground="white",
+        bg="#21262d",
+        fg="#e6edf3",
+        activebackground="#30363d",
+        activeforeground="#e6edf3",
         relief="flat",
-        padx=12,
-        pady=6,
+        padx=14,
+        pady=7,
+        font=("Segoe UI", 9),
+        cursor="hand2",
     ).pack(side="right")
 
     pencere.focus_force()
     pencere.lift()
 
 
+def yukleniyor_penceresi_goster(baslik):
+    """Yükleniyor göstergesi."""
+    pencere = tk.Toplevel(root)
+    pencere.title("Radyoloji Rapor Asistanı")
+    pencere.geometry("380x120")
+    pencere.resizable(False, False)
+    pencere.attributes("-topmost", True)
+    pencere.configure(bg="#0d1117")
+
+    tk.Label(
+        pencere,
+        text="🏥 Radyoloji Rapor Asistanı",
+        font=("Segoe UI", 11, "bold"),
+        bg="#0d1117",
+        fg="#58a6ff",
+    ).pack(pady=(16, 4))
+
+    tk.Label(
+        pencere,
+        text=f"⏳ İşleniyor: {baslik}...",
+        font=("Segoe UI", 10),
+        bg="#0d1117",
+        fg="#8b949e",
+    ).pack()
+
+    # İlerleme çubuğu animasyonu
+    progress_label = tk.Label(
+        pencere,
+        text="",
+        font=("Segoe UI", 9),
+        bg="#0d1117",
+        fg="#238636",
+    )
+    progress_label.pack(pady=6)
+
+    dots = ["", ".", "..", "...", "...."]
+    dot_idx = [0]
+
+    def animate():
+        if pencere.winfo_exists():
+            progress_label.config(text=f"Analiz ediliyor{dots[dot_idx[0] % len(dots)]}")
+            dot_idx[0] += 1
+            pencere.after(400, animate)
+
+    animate()
+    return pencere
+
+
 def islemi_yap(komut_adi, secili_metin):
+    """Seçilen işlemi Ollama ile yap ve sonucu pencerede göster."""
     prompt_emri = ISLEMLER[komut_adi]
-    full_prompt = f"{prompt_emri}:\n\n'{secili_metin}'"
+    full_prompt = f"{prompt_emri}\n\n---\nRADYOLOJİ RAPORU:\n{secili_metin}\n---"
 
-    print(f"🤖 İşlem: {komut_adi}")
-    print("⏳ Ollama ile işleniyor...")
+    print(f"🏥 İşlem: {komut_adi}")
+    print("⏳ Ollama ile analiz ediliyor...")
 
-    sonuc = ollama_cevap_al(full_prompt)
+    # Yükleniyor penceresi aç
+    yukleniyor_ref = [None]
+
+    def ac_yukleniyor():
+        yukleniyor_ref[0] = yukleniyor_penceresi_goster(komut_adi)
+
+    gui_queue.put((ac_yukleniyor, ()))
+    time.sleep(0.3)
+
+    sonuc = ollama_cevap_al(full_prompt, sistem_prompt=SISTEM_PROMPT)
+
+    # Yükleniyor penceresini kapat
+    def kapat_yukleniyor():
+        if yukleniyor_ref[0] and yukleniyor_ref[0].winfo_exists():
+            yukleniyor_ref[0].destroy()
+
+    gui_queue.put((kapat_yukleniyor, ()))
+
     if not sonuc:
         print("❌ Sonuç alınamadı.")
         return
 
-    sonuc = strip_code_fence(sonuc)
-    if sonuc.startswith("'") and sonuc.endswith("'"):
-        sonuc = sonuc[1:-1]
+    # Uyarı zaten sistemde var, ama modelin eklemediği durumlar için kontrol
+    if "doktor tanısı değildir" not in sonuc.lower():
+        sonuc += "\n\n⚠️ Bu bir doktor tanısı değildir. Lütfen uzman hekiminize başvurunuz."
 
-    if pencere_modunda_gosterilsin_mi(komut_adi):
-        gui_queue.put((sonuc_penceresi_goster, (komut_adi, sonuc)))
-        print("âœ… SonuÃ§ ayrÄ± pencerede gÃ¶sterildi.")
-        return
-
-    time.sleep(0.2)
-    pyperclip.copy(sonuc)
-    time.sleep(0.1)
-    pyautogui.hotkey("ctrl", "v")
-    print("✅ İşlem tamamlandı!")
+    gui_queue.put((sonuc_penceresi_goster, (komut_adi, sonuc)))
+    print("✅ Analiz tamamlandı!")
 
 
 def process_queue():
@@ -260,22 +389,26 @@ def process_queue():
             except queue.Empty:
                 break
             func, args = task
-            func(*args)
+            if callable(func):
+                func(*args)
+            else:
+                # (func, args) değil sadece (func, ()) formatı için
+                func()
     finally:
         if root:
             root.after(100, process_queue)
 
 
 def menu_goster():
-    """Metni kopyalar ve menüyü gösterir (ana thread)."""
+    """Metni kopyalar ve sağlık menüsünü gösterir (ana thread)."""
     secili_metin = secili_metni_kopyala()
     if not secili_metin.strip():
         gui_queue.put(
             (
                 messagebox.showwarning,
                 (
-                    "Secim Bulunamadi",
-                    "Lutfen once metin secin, sonra F8 ile menuyu acin.",
+                    "Seçim Bulunamadı",
+                    "Lütfen önce radyoloji raporu metnini seçin, sonra F8 ile menüyü açın.",
                 ),
             )
         )
@@ -284,12 +417,22 @@ def menu_goster():
     menu = tk.Menu(
         root,
         tearoff=0,
-        bg="#2b2b2b",
-        fg="white",
-        activebackground="#4a4a4a",
+        bg="#161b22",
+        fg="#e6edf3",
+        activebackground="#388bfd",
         activeforeground="white",
         font=("Segoe UI", 10),
+        borderwidth=0,
+        relief="flat",
     )
+
+    # Başlık etiketi (tıklanamaz)
+    menu.add_command(
+        label="🏥 Radyoloji Rapor Asistanı — Radyoloji Raporu",
+        state="disabled",
+        font=("Segoe UI", 9, "bold"),
+    )
+    menu.add_separator()
 
     def komut_olustur(k_adi, s_metin):
         def komut_calistir():
@@ -333,25 +476,39 @@ def on_release(key):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🤖 AI Asistan - Metin İşleme")
+    print("🏥 Radyoloji Rapor Asistanı — Radyoloji Raporu Analizi")
     print("=" * 60)
-    aktif_text_model = get_available_text_model()
-    print(f"📦 Metin İşleme (F8): {aktif_text_model}")
+    aktif_model = get_available_text_model()
+    print(f"📦 Model (F8): {aktif_model}")
     print()
     print("🔧 Kullanım:")
-    print("   F8 - Metin sec ve AI islemleri yap")
+    print("   1. Radyoloji raporu metnini seçin")
+    print("   2. F8 tuşuna basın")
+    print("   3. Açılan menüden işlem seçin")
     print()
-    print("⚠️ Programı kapatmak için bu pencereyi kapatın veya Ctrl+C yapın.")
+    print("📋 Menü Seçenekleri:")
+    for k in ISLEMLER.keys():
+        print(f"   {k}")
+    print()
+    print("⚠️  Bu program bilgilendirme amaçlıdır, doktor tanısı değildir!")
+    print("⚠️  Programı kapatmak için bu pencereyi kapatın veya Ctrl+C yapın.")
     print("=" * 60)
 
     try:
         test_response = requests.get("http://localhost:11434/api/tags", timeout=5)
         if test_response.status_code == 200:
             print("✅ Ollama bağlantısı başarılı!")
+            modeller = test_response.json().get("models", [])
+            if modeller:
+                print("📦 Yüklü modeller:")
+                for m in modeller:
+                    print(f"   - {m.get('name', '?')}")
+            else:
+                print("⚠️  Hiç model yüklü değil! 'ollama pull gpt-oss:120b-cloud' çalıştırın.")
         else:
-            print("⚠️ Ollama'ya bağlanılamadı, servisi kontrol edin!")
+            print("⚠️  Ollama'ya bağlanılamadı, servisi kontrol edin!")
     except Exception:
-        print("⚠️ Ollama çalışmıyor olabilir! 'ollama serve' ile başlatın.")
+        print("⚠️  Ollama çalışmıyor! Terminalde 'ollama serve' ile başlatın.")
 
     print()
 

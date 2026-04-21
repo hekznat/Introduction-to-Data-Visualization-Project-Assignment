@@ -2,6 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
+echo ============================================================
+echo   Radyoloji Rapor Asistanı - Kurulum
+echo ============================================================
+echo.
+
 echo [1/4] Python kontrol ediliyor...
 set "PY_CMD="
 
@@ -31,24 +36,29 @@ if not defined PY_CMD (
 
 if not defined PY_CMD (
     echo [HATA] Uygun Python 3 bulunamadi.
-    echo [HATA] Python 3.13 kurup tekrar deneyin: https://www.python.org/downloads/
+    echo [HATA] Python 3.10+ kurup tekrar deneyin: https://www.python.org/downloads/
+    pause
     exit /b 1
 )
+
+echo [OK] Python bulundu: %PY_CMD%
 
 echo [2/4] Sanal ortam olusturuluyor...
 if not exist ".venv\Scripts\python.exe" (
     %PY_CMD% -m venv .venv
     if not %errorlevel%==0 (
         echo [HATA] .venv olusturulamadi.
+        pause
         exit /b 1
     )
 )
 
 echo [3/4] pip guncelleniyor...
 call ".venv\Scripts\activate.bat"
-python -m pip install --upgrade pip
+python -m pip install --upgrade pip --quiet
 if not %errorlevel%==0 (
     echo [HATA] pip guncellenemedi.
+    pause
     exit /b 1
 )
 
@@ -56,8 +66,15 @@ echo [4/4] Paketler kuruluyor...
 pip install -r requirements.txt
 if not %errorlevel%==0 (
     echo [HATA] Paket kurulumu basarisiz.
+    pause
     exit /b 1
 )
 
-echo [OK] Kurulum tamamlandi.
+echo.
+echo ============================================================
+echo   [OK] Kurulum tamamlandi!
+echo   Simdi BASLAT.bat ile programi calistirabilisiniz.
+echo ============================================================
+echo.
+pause
 exit /b 0

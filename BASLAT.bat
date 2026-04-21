@@ -2,16 +2,19 @@
 setlocal
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\pythonw.exe" (
-    echo [INFO] Sanal ortam bulunamadi. Ilk kurulum baslatiliyor...
-    call "%~dp0kurulum.bat"
-    if not %errorlevel%==0 (
-        echo [HATA] Kurulum basarisiz. Program baslatilamadi.
-        pause
-        exit /b 1
-    )
+:: Mevcut projenin sanal ortamini kullan
+set "VENV_PATH=%~dp0..\Introduction-to-Data-Visualization-Project-Assignment\.venv"
+
+if not exist "%VENV_PATH%\Scripts\pythonw.exe" (
+    echo [HATA] Sanal ortam bulunamadi: %VENV_PATH%
+    echo [INFO] Lutfen once Introduction-to-Data-Visualization-Project-Assignment
+    echo [INFO] klasoründeki kurulum.bat dosyasini calistirin.
+    pause
+    exit /b 1
 )
 
-call ".venv\Scripts\activate.bat"
-start "AI Asistan" /B ".venv\Scripts\pythonw.exe" "%~dp0main.pyw"
+start "Radyoloji Rapor Asistanı" /B "%VENV_PATH%\Scripts\pythonw.exe" "%~dp0main.pyw"
+echo [OK] Radyoloji Rapor Asistanı baslatildi!
+echo [INFO] F8 ile radyoloji raporu metnini analiz edin.
+timeout /t 2 >nul
 exit /b 0
